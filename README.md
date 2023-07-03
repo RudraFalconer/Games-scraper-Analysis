@@ -1,4 +1,4 @@
-# GamingSteamScrapperClean
+# Games Scraper Analysis
 
 ## Contributors
 
