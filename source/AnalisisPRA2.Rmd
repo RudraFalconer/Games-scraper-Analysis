@@ -1,0 +1,959 @@
+---
+title: ''
+author: "Autor: "
+date: "Mayo 2023"
+output:
+  pdf_document:
+    highlight: zenburn
+    toc: yes
+  word_document: default
+  html_document:
+    highlight: default
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE, echo=FALSE}
+library("knitr")
+library("rmarkdown")
+knitr::opts_chunk$set(echo=FALSE, warning = FALSE, message = FALSE)
+
+```
+
+```{r}
+library("tidyverse")
+library("gridExtra")
+library("car")
+library("corrplot")
+library("grid")
+path = 'D:/Master/Tipología y ciclo de vida de los datos/PRA2/games-2023-04-24__12-26-14.csv'
+gamesdataset <- read.csv(path, sep = ";")
+```
+
+# Introducción
+
+En este trabajo, llevaremos a cabo un análisis más profundo del csv generado en la PRA1 mediante el uso de webscraping. Este dataset contiene información variada sobre los juegos de la plataforma Steam listados en <https://www.instant-gaming.com/>.
+
+La información acabarca precio, porcentaje de descuento, valoración y reseñas, asi como el titulo del juego, desarrollador y publisher. También una columna que contiene información acerca del juego en si, como puede ser el género, si es multijugador, online etc.
+
+Dado que en los recientes años, y especialmente con el Covid, la industria del videojuego ha experimentado un crecimiento significativo. Con la aparición de plataformas en linea para la adiquisición de videojuegos, se genera una gran cantidad de información que puede ser aprovechada para estudiar las tendencias del mercado y comportamiento de consumidores.
+
+# Metodologia y Objetivos
+
+Mediante técnicas de análisis exploratorio y modelado predictivo, buscaremos identificar patrones, tendencias y relaciones entre las variables presentes en el dataset, intentando obtener conocimientos y patrones relevantes en el ámbito de los videojuegos.
+
+Algunas de las preguntas que nos planteamos abordar son: ¿Cuáles son los géneros de juegos más populares entre los usuarios? ¿Existe alguna relación entre el precio de un juego y su nivel de descuento? ¿Qué características influyen en la valoración de los usuarios sobre un juego?
+
+Para conseguir esto, utilizaremos tecnicas de representación visual (graficos, tablas..) asi como el analisis de una serie de indicadores que nos proporcionarán información sobre el rendimiento y resultados de nuestros modelos.
+
+# Limpieza y procesado de datos
+
+## Presentación de los datos
+
+El dataset consiste exclusivamente de juegos de la plataforma Steam. Consiste de aproximadamente 8000 observaciones y un total de 12 variables.
+
+A continuación, echaremos un primer vistazo a nuestros datos
+
+```{r}
+glimpse(gamesdataset)
+```
+
+Explicación de las variables
+
+"Title": Nombre del videojuego
+
+"Price": Precio del videojuego
+
+"Discount": Descuento frente al mercado físico.
+
+"Developer": Estudio que ha desarrollado el juego.
+
+"Publisher": Quien es el publicador del videojuego.
+
+"tags": Atributos del juego, como, por ejemplo, de que genero es, si es multijugador, etc.
+
+"release_date": Fecha de lanzamiento "valoration": valoración media del videojuego
+
+"reviews": número de reseñas que tiene el videojuego
+
+"stock": Indica si hay disponibilidad/stock
+
+"download": Tipo de descarga.
+
+"f2p": Indica si el juego es gratis
+
+
+## Analisis de datos perdidos
+
+Primero, vamos a ver si realmente encontramos elementos en blanco o perdidos en nuestro dataset
+
+```{r }
+print('Blancos')
+colSums(gamesdataset=="")
+
+#gamesdataset %>% is.na() %>% summary()
+```
+
+Tras comprobar si hay elementos en blanco vemos que:
+
+-   Precio tiene 625 elementos,
+-   Discount 683,
+-   Developer 352,
+-   Publisher 362,
+-   Release_Date: 35
+-   Stock 433,
+-   Descarga 2803
+
+```{r }
+print('NA')
+colSums(is.na(gamesdataset))
+```
+
+Respecto a los NA vemos que hay:
+
+-   4130 en Valoration
+-   321 en Reviews
+
+Se observa que muchas valoraciones nulas tienen relación a cuando el valor de Review es 0, vamos a comprobarlo.
+
+```{r }
+coincidencia <- is.na(gamesdataset$valoration) & is.na(gamesdataset$reviews)
+conteo <- sum(coincidencia, na.rm = TRUE)
+print(conteo)
+
+coincidencia <- is.na(gamesdataset$valoration) & gamesdataset$reviews == 0
+conteo <- sum(coincidencia, na.rm = TRUE)
+print(conteo)
+```
+
+Con esto podemos ver que efectivamente todos los valores nulos de valoration son debido a que hay reviews en 0 o reviews nulas.
+
+## Transformaciones
+
+```{r }
+gamesdatasetClean <- gamesdataset
+```
+
+Transformar la columna precio a numérica
+
+```{r }
+gamesdatasetClean$price <- as.numeric(gsub("€", "", gamesdatasetClean$price, fixed = TRUE))
+
+```
+
+Transformar descuento a numérica
+
+```{r }
+gamesdatasetClean$discount <- gsub("%", "", gamesdatasetClean$discount, fixed = TRUE)
+
+gamesdatasetClean$discount <- gsub("-", "", gamesdatasetClean$discount, fixed = TRUE)
+
+
+gamesdatasetClean$discount <- as.numeric(gamesdatasetClean$discount)
+
+```
+
+Transformar columna stock a dictómica dependiendo si hay stock o no
+
+```{r }
+
+gamesdatasetClean$stock <- ifelse(gamesdatasetClean$stock == "En stock", 1, 0)
+
+```
+
+Vemos que la columna Tags son listas de caracteres, por lo que modificarlo para quitar los caracteres "[" y "]" para mejor visualización
+
+```{r }
+
+gamesdatasetClean$tags <- gsub("\\[|\\]|'|\\\n", "", gamesdatasetClean$tags)
+
+```
+
+Transformar F2p a dictómica con un 0 si es False y un 1 si es True
+
+```{r }
+gamesdatasetClean$f2p <- ifelse(gamesdatasetClean$f2p == "True", 1, 0)
+```
+
+Creación columna precio inicial
+
+```{r }
+gamesdatasetClean$initial_price <- gamesdatasetClean$price * 100 /  (100 - gamesdatasetClean$discount)
+```
+
+Creamos una nueva columna para ver si es DLC o no
+
+```{r}
+gamesdatasetClean$DLC <- grepl("DLC", gamesdatasetClean$tags)
+```
+
+### Tratado de blancos
+
+Como parte del tratado de blancos, vamos a sustituir las casillas en blanco de las variables developer y publisher por "Unknown" y los blancos de descarga digital como "No" descarga digital.
+
+```{r}
+gamesdatasetClean <- gamesdatasetClean %>% mutate(developer = ifelse(developer == "", "Unknown", developer))
+gamesdatasetClean <- gamesdatasetClean %>% mutate(publisher = ifelse(publisher == "", "Unknown", publisher))
+gamesdatasetClean <- gamesdatasetClean %>% mutate(descarga = ifelse(descarga == "", "No", descarga))
+```
+
+### Extracción de info de la columna tags
+
+Como hemos podido observar, la columna tags contiene información variada sobre los juegos. Para facilitar el trabajo con los datos y para que el dataframe quede más limpio, desglosaremos esta variable en varias.
+
+Por un lado, en los que respecta al genero, vamos a considerar los generos más comunes: "Acción", "Aventura", "Carreras", "Aventura", "Estrategia", "Deporte", "Simulación", "RPG", "Indies", "Gestión". Se planteará de la siguiente forma: El primer elemento que aparezca en el string, será el genero principal del juego, y el segundo elemento que aparezca será el genero secundario. De no tener más de un genero, la columna genre2 tendrá el mismo valor que genre 1
+
+También crearemos una columna nueva que indicará si el juego es indie, y si tiene multijugador, a modo de true/ false
+
+```{r}
+gamesdatasetClean$tags <- gsub("\\\\.*$", "", gamesdatasetClean$tags)
+gamesdatasetClean$tags <- gsub(", $", "", gamesdatasetClean$tags)
+
+genre_list <- c("Acción", "Aventura", "Carreras", "Aventura", "Estrategia", "Deporte", "Simulación", "RPG", "Gestión")
+
+get_matching_genre <- function(genre_string) {
+  genre_vector <- unlist(strsplit(genre_string, ", "))
+  matching_genre <- genre_vector[genre_vector %in% genre_list][1]
+  return(matching_genre)
+}
+
+get_matching_genre <- function(genre_string) {
+  genre_vector <- unlist(strsplit(genre_string, ", "))
+  matching_genre <- genre_vector[genre_vector %in% genre_list][1]
+  
+  if (is.na(matching_genre)) {
+    return("Unknown")
+  } else {
+    return(matching_genre)
+  }
+}
+
+
+get_matching_genre2 <- function(genre_string) {
+  genre_vector <- unlist(strsplit(genre_string, ", "))
+  matching_genres <- intersect(genre_vector, genre_list)
+  if (length(matching_genres) >= 2) {
+    return(matching_genres[2])
+  } else if (length(matching_genres) == 1) {
+    return(matching_genres[1])
+  } else {
+    return(genre_vector[1])
+  }
+}
+
+gamesdatasetClean$genre1 <- sapply(gamesdatasetClean$tags, get_matching_genre)
+gamesdatasetClean$genre2 <- sapply(gamesdatasetClean$tags, get_matching_genre2)
+
+gamesdatasetClean$genre1 <- as.factor(gamesdatasetClean$genre1)
+gamesdatasetClean$genre2 <- as.factor(gamesdatasetClean$genre2)
+
+# Creación columnas multijugador e indie
+gamesdatasetClean$multiplayer <- !grepl("Un solo jugador", gamesdatasetClean$tags)
+gamesdatasetClean$indie <- grepl("Indie", gamesdatasetClean$tags)
+
+# gamesdatasetClean %>% is.na() %>% summary()
+
+```
+
+Como podemos ver, este es el aspecto de nuestro nuevo dataframe, pero el problema de los NA persiste.
+
+La columna que mas valores perdidos presenta es la columna de valoración. Para no perder la mitad de las observaciones, imputaremos los valores perdidos de la columna valoration utilizando el paquete "mice". Este paquete utiliza un algoritmo random forest para imputar los valores perdidos de la columna valoration.
+
+Recordemos que no eliminamos ciertos espacios en blanco que llamamos unknown. Esto representa que desconocemos el desarrollador o publicador. Estas columnas podemos guardarlas o no (en este caso las eliminaremos). Para no reducir demasiado el dataset, imputaremos los nas de descuento y precio también
+
+### Imputación knn de valoration y reviews (multiple options) y tratado de NAs
+
+```{r }
+library("mice")
+miceMod <- mice(gamesdatasetClean, method = "rf", printFlag = FALSE) 
+miceOutput <- complete(miceMod)
+gamesdatasetClean$valoration <- miceOutput$valoration
+
+gamesdatasetClean$reviews <- miceOutput$reviews
+gamesdatasetClean$price <- miceOutput$price
+gamesdatasetClean$initial_price <- miceOutput$initial_price
+gamesdatasetClean$discount <- miceOutput$discount
+gamesdatasetClean <- gamesdatasetClean %>% na.omit()
+
+#gamesdatasetClean %>% is.na() %>% summary()
+```
+
+Tras imputar ciertos valores perdidos numericos, vamos a deshacernos de los desconocidos, asi como de la columna tags.
+
+De esta forma el dataset final tendria esta estructura
+
+```{r}
+gamesdatasetClean <- subset(gamesdatasetClean, genre1 != "Unknown")
+
+gamesdatasetClean <- subset(gamesdatasetClean, publisher != "Unknown")
+gamesdatasetClean <- subset(gamesdatasetClean, developer != "Unknown")
+
+
+gamesdatasetClean$tags <- NULL
+#gamesdatasetClean %>% is.na() %>% summary()
+```
+
+## PCA Analysis
+
+Vamos a continuar ralizando un analisis PCA (Princiapl Component Analysis). Este analisis es muy utilizado a la hora de trabajar con datos de alta dimensionalidad, permitiendo reducir el tamaño del conjunto de datos reteniendo una cantidad razonable de información. En este sentido, nuestro dataframe no es excesivamente grande, pero aun asi, realizar la PCA es interesante, ya que nos puede aportar información acerca de variables nos aportan mas información, y que variables pueden ser prescindibles.
+
+No obstante, para aplicar el analisis, tendremos que sometes nuestro dataframe a otra serie de transformacione.
+
+Para esto, crearemos un nuevo dataset para no alterar el que ya tenemos
+
+### Scaling numerics
+
+Dado que el algoritmo PCA solo puede procesar datos numericos (y aunque no sea la mejor opción), transformaremos las columnas factor a numericas. Además, este metodo también es muy sensible a la relatividad de los datos. Para evitar asignar más peso del debido a ciertas variables, procederemos a escalar los datos numericos. Como defecto el procedimiento que utilizamos utiliza el proceso Z-score normalization, que centra las variables con media 0 y desviación estandar 1. También para este analisis se desglosa la columna que indica la fecha de lanzamiento.
+
+```{r}
+gamesdatasetClean1 <- gamesdatasetClean 
+titles_to_drop <- c("Exoprimal Deluxe Edition", "Exoprimal", "Victoria 3: Voice of the People - Europe")
+
+gamesdatasetClean1 <- subset(gamesdatasetClean1, !(title %in% titles_to_drop))
+
+Sys.setlocale("LC_TIME", "Spanish")
+
+gamesdatasetClean1$release_date <- as.Date(gamesdatasetClean1$release_date, format = "%d %B %Y")
+
+gamesdatasetClean1$year <- as.numeric(format(gamesdatasetClean1$release_date, "%Y"))
+gamesdatasetClean1$month <- as.numeric(format(gamesdatasetClean1$release_date, "%m"))
+gamesdatasetClean1$day <- as.numeric(format(gamesdatasetClean1$release_date, "%d"))
+
+gamesdatasetClean1<- gamesdatasetClean1 %>% na.omit()
+
+gamesdatasetClean <- gamesdatasetClean1
+
+gamesdatasetClean1 <- subset(gamesdatasetClean1, select = -release_date)
+numeric_cols <- sapply(gamesdatasetClean1, is.numeric)
+#vamos a dejar release_date, i su forma desglosada, para analizar los elementos por separado
+# Aplicamos scale a las columnas numericas
+gamesdatasetClean1[numeric_cols] <- lapply(gamesdatasetClean1[numeric_cols], scale)
+games_names <- names(gamesdatasetClean1)
+colnames(gamesdatasetClean1) <- games_names
+
+# Convertimos string a factor
+gamesdatasetClean1[, sapply(gamesdatasetClean1, is.character)] <- lapply(gamesdatasetClean1[, sapply(gamesdatasetClean1, is.character)], as.factor)
+```
+
+### Convert factors and bool to numeric
+
+Tras todas las conversiones pertinentes, podemos tomar un vistazo rapido a nuestro dataset
+
+```{r}
+factor_cols <- sapply(gamesdatasetClean1, is.factor)
+
+gamesdatasetClean1[factor_cols] <- lapply(gamesdatasetClean1[factor_cols], as.numeric)
+gamesdatasetClean1$multiplayer <- as.numeric(!gamesdatasetClean1$multiplayer)
+gamesdatasetClean1$indie <- as.numeric(!gamesdatasetClean1$indie)
+
+gamesdatasetClean1$valoration <- as.numeric(gamesdatasetClean1$valoration)
+gamesdatasetClean1$reviews <- as.numeric(gamesdatasetClean1$reviews)
+
+gamesdatasetClean1 <- na.omit(gamesdatasetClean1)
+
+```
+
+### PCA
+
+```{r}
+pca_result <- prcomp(gamesdatasetClean1)
+
+#testdf<-subset(gamesdatasetClean1, select = -title) 
+#testnames<- names(testdf)
+#pca_result <- prcomp(testdf)
+
+sdev_df <- data.frame(Variable = games_names, StandardDeviation = pca_result$sdev)
+
+variance_explained <- pca_result$sdev^2 / sum(pca_result$sdev^2)
+
+cumulative_variance <- cumsum(variance_explained)
+
+variance_df <- data.frame(
+  Variable = games_names,
+  VarianceExplained = variance_explained,
+  CumulativeVariance = cumulative_variance
+)
+kable(head(variance_df, 10), align = "c")
+
+```
+
+Aqui podemos observar los resultados del análisis PCA, donde se muestra la varianza explicada de cada variable y la varianza acumulada explicada. Sorprende/salta a la vista que 2 variables explican practicamente la totalidad de la varianza. Representemos esto y analicemos en mas profundidad los resultados
+
+### Representación gráfica resultados PCA 
+
+```{r}
+
+ggplot(variance_df, aes(x = reorder(Variable, CumulativeVariance), y = CumulativeVariance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variable", y = "Cumulative Variance Explained") +
+  ggtitle("Cumulative Variance Explained by Variables") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.title.x = element_blank(),
+        plot.title = element_text(hjust = 0.5)) +
+  geom_hline(yintercept = 0.85, color = "red", linetype = "dashed", size = 1)
+```
+
+Aqui vemos los resultados con más claridad. Como ya vimos en los resultados, 2 variables explican casi la totalidad del dataset. Esto quiere decir que la mayoria de información relevante se concentra en estas dos variables, y potencialmente tienen una alta contribución en los patrones y estructura de nuestros datos. Este resultado sorprende por varias razones: Factores como el genero del juego, la valoración o la cantidad de reseñas no tiene mucha relevancia en este contexto. También sorprende porque en una industria tan grande como la del videojuego no es normal que gran cantidad de la información se resuma en 2 variables.
+
+No obstante, al haber aplicado este test a un dataframe en condiciones subopticas, es mejor coger "con pinzas" este resultado.
+
+##dataframe for Modelization
+
+```{r}
+
+gamesdatasetClean$release_date <- as.character(gamesdatasetClean$release_date)
+gamesdatasetClean[, sapply(gamesdatasetClean, is.character)] <- lapply(gamesdatasetClean[, sapply(gamesdatasetClean, is.character)], as.factor)
+
+```
+
+# Analisis Exploratorio de los datos
+
+Tras realizar todos los cambios y transformaciones pertinentes a nuestro conjunto de dato, podemos proceder a un primer analisis exploratorio de nuestros datos.
+
+## Developers y publisher
+
+Empecemos por los desarrolladores y publicadores.
+
+```{r}
+level_counts_developers <- table(as.factor(gamesdatasetClean$developer))
+level_counts_developers <- as.data.frame(level_counts_developers)
+level_counts_developers <- level_counts_developers[order(-level_counts_developers$Freq), ]
+level_counts_developers$Mean_Valoration <- round(tapply(gamesdatasetClean$valoration, gamesdatasetClean$developer, mean), 2)
+
+kable(head(level_counts_developers, 15), align = "c")
+
+colnames(level_counts_developers)[1] <- "Developer"
+top_15_developers<-head(level_counts_developers, 15)
+
+#uncomment for graph generation
+# ggplot(data = top_15_developers, aes(x = fct_reorder(Developer, -Freq), y = Freq)) +
+#   geom_bar(stat = "identity", fill = "skyblue") +
+#   labs(x = "Developer", y = "Frequency", title = "Top 15 Most Appearing Developers") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1),
+#         axis.title.x = element_blank(),
+#         plot.title = element_text(hjust = 0.5))
+```
+
+Aqui podemos observar los Publicadores que más juegos tienen publicados. Encabeza Paradox y Dovetail games (y algunos nombres conocidos dentro de la industria). También podemos observar en la tabla la valoracion media de los juegos de cada desarrollador
+
+Hagamos ahora lo mismo para los publicadores de videojuegos
+
+```{r}
+level_counts_publisher <- table(as.factor(gamesdatasetClean$publisher))
+level_counts_publisher <- as.data.frame(level_counts_publisher)
+level_counts_publisher <- level_counts_publisher[order(-level_counts_publisher$Freq), ]
+level_counts_publisher$Mean_Valoration <- round(tapply(gamesdatasetClean$valoration, gamesdatasetClean$publisher, mean), 2)
+
+kable(head(level_counts_publisher, 15), align = "c")
+
+colnames(level_counts_publisher)[1] <- "Publisher"
+top_15_publisher<-head(level_counts_publisher, 15)
+# uncomment for graph generation
+# ggplot(data = top_15_publisher, aes(x = fct_reorder(Publisher, -Freq), y = Freq)) +
+#   geom_bar(stat = "identity", fill = "skyblue") +
+#   labs(x = "Publisher", y = "Frequency", title = "Top 15 Most Appearing Publisher") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1),
+#         axis.title.x = element_blank(),
+#         plot.title = element_text(hjust = 0.5))
+```
+
+Tras analizar quienes son las empresas que mas aparecen, vamos a ver que tipos de juegos hace cada empresa.
+
+```{r}
+top_15_developers <- head(level_counts_publisher, 15)$Publisher
+filtered_games <- gamesdatasetClean %>% filter(publisher %in% top_15_developers)
+# Group the filtered data by developer and genre, and count the number of games in each group
+genre_counts_by_developer <- filtered_games %>%
+  group_by(publisher, genre1) %>%
+  summarise(game_count = n(), .groups = 'drop') %>%
+  as.data.frame()
+
+# Display the result
+genre_counts_wide <- genre_counts_by_developer %>%
+  pivot_wider(names_from = genre1, values_from = game_count, values_fill = 0)
+
+kable(genre_counts_wide)
+
+genre_counts_wide %>% dplyr::select(-publisher) %>% colSums()
+
+
+```
+
+Esto nos puede proporcinar información relevante sobre las empresas mas presentes en el mercado y a que tipo de juegos desarrollan con más frecuencia: Vemos, por ejemplo, que Paradox se dedica principalmente a juegos de Simulación/Estrategia, mientras que Bandai se especializa en juegos de acción. Por otro lado, vemos que generos como Deporte y Carreras son mas nicho, y solo una de los desarrolladores mas frecuentes se centran en este tipo de juegos.
+
+Asimismo, podemos observar que el genero de acción es con diferencia el mas producido, seguido de simulación y estrategia
+
+## Multiplayer, Indie y Dlc
+
+### DLC
+
+Vamos a comprobar que proporción de juegos tienen multijugador, son indies, y cuantos de ellos son dlcs (pack de expansión)
+
+```{r}
+plot1 <-gamesdatasetClean %>% 
+  ggplot(aes(x = DLC)) +
+  geom_bar(fill = "#69b3a2", color = "black", alpha = 0.7) +
+  labs(
+    title = "DLC",
+    x = "DLC",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 12)
+  )
+```
+
+Vemos que, como es de esperar, la gran mayoria de registros son juegos, y no packs de expansión
+
+### Indie
+
+```{r}
+plot2 <-gamesdatasetClean %>% 
+  ggplot(aes(x = indie)) +
+  geom_bar(fill = "#69b3a2", color = "black", alpha = 0.7) +
+  labs(
+    title = "Indie",
+    x = "Indie",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 12)
+  )
+```
+
+Se puede apreciar que buena parte de los registros son juegos indie (llamados independientes, dado que son desarrollados por estudios mas pequeños/modestos). Puede ser indicio de un mercado bastante competitivo por el numero de competidores existentes
+
+### Multiplayer
+
+```{r}
+plot3<- gamesdatasetClean %>% 
+  ggplot(aes(x = multiplayer)) +
+  geom_bar(fill = "#69b3a2", color = "black", alpha = 0.7) +
+  labs(
+    title = "Multiplayer",
+    x = "Multiplayer",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 12)
+  )
+
+grid.arrange(plot1,plot2,plot3,ncol=3)
+
+```
+
+Sorprende este resultado ya que en esta epoca se espera que los juegos tengan servicio en la nube, y multijugador a través de la nube. Esto puede indicar que probablemente hayamos interpretado la columna tags de forma erronea, y que "un solo jugador" no necesariamente implique ser SOLO de un jugador.
+
+## Relación entre variables
+
+Tras analizar individualmente, veamos como se relacionan nuestras variables entre si
+
+```{r}
+# Funciones para comparar columnas visualmente
+# Compara factor/numeric
+compare_fact_num <- function(data, factor_col, numeric_col) {
+  ggplot(data, aes(x = {{factor_col}}, y = {{numeric_col}})) +
+    geom_boxplot(fill = "#69b3a2", color = "black", alpha = 0.7) +
+    labs(
+      title = paste(deparse(substitute(numeric_col)), "by", deparse(substitute(factor_col))),
+      x = deparse(substitute(factor_col)),
+      y = deparse(substitute(numeric_col))
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 18, face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 12)
+    )
+}
+
+# Compara variables numéricas
+compare_numeric_columns <- function(data, x_col, y_col) {
+  ggplot(data, aes(x = {{x_col}}, y = {{y_col}})) +
+    geom_point(color = "#4287f5", alpha = 0.7) +
+    geom_smooth(method = lm, color = "#f55c42", fill = "#fdd0c7", alpha = 0.3) +
+    labs(
+      title = paste(deparse(substitute(x_col)), "vs", deparse(substitute(y_col))),
+      x = deparse(substitute(x_col)),
+      y = deparse(substitute(y_col))
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 18, face = "bold"),
+      axis.text = element_text(size = 12),
+      axis.title = element_text(size = 14),
+      legend.title = element_blank(),
+      legend.text = element_text(size = 12),
+    )
+}
+
+# Crea un plot con cada nivel
+create_count_plot <- function(column_name) {
+  level_counts <- table(credit[[column_name]])
+
+  plot_data <- data.frame(Level = names(level_counts), Count = as.numeric(level_counts))
+
+  plot_data <- plot_data[order(plot_data$Count, decreasing = TRUE), ]
+
+  ggplot(plot_data, aes(x = reorder(Level, -Count), y = Count)) +
+    geom_bar(stat = "identity", fill = "steelblue") +
+    labs(x = column_name, y = "Count") +
+    ggtitle(paste("Level Counts of", column_name)) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+### Histogramas/distribuciones
+
+Vamos a comenzar representando los histogramas de algunas de nuestras variables numericas, como pueden ser precio, descuento o valoración. Estas gráficas nos darán indicios sobre la distribución que siguen nuestras variables, y si esta se asemeja a la normal.
+
+```{r}
+plot4 <-ggplot(gamesdatasetClean, aes(valoration)) +
+  geom_histogram(fill = "lightblue", color = "black", bins = 10) +
+  labs(
+    title = "Distribution of Valoration",
+    x = "Valoration",
+    y = "Frequency"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +  geom_vline(xintercept = mean(gamesdatasetClean$valoration), color = "red", linetype = "dashed", size = 1) 
+```
+
+A primera vista se ve que Valoration no sigue una distribución normal. Salta a la vista que hay un alto numero de valoraciones muy altas/maximas. La linea vertical roja indica la media.
+
+```{r}
+plot5 <- ggplot(gamesdatasetClean, aes(price)) +
+  geom_histogram(fill = "lightblue", color = "black", bins = 100) +
+  labs(
+    title = "Distribution of Price",
+    x = "Price",
+    y = "Frequency"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +  geom_vline(xintercept = mean(gamesdatasetClean$price), color = "red", linetype = "dashed", size = 1) 
+```
+
+(ver si dejar y normal o en escala logaritmica). Podemos observar que hay algunos juegos que tienen un coste mas elevado de lo normal. Esto se podria considerar outliers, pero dado que existen packs de juegos + expansión, estos altos precios son outliers legitimos. Aun asi, price tampoco sigue una distribución normal, y la gran mayoria de juegos tienen un precio inferior a 25 euros (lo que cabe esperar de un sitio que oferta juegos de una forma mas barata)
+
+```{r}
+plot6 <- ggplot(gamesdatasetClean, aes(discount)) +
+  geom_histogram(fill = "lightblue", color = "black", bins = 30) +
+  labs(
+    title = "Distribution of Discount",
+    x = "Discount",
+    y = "Frequency"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +  geom_vline(xintercept = mean(gamesdatasetClean$discount), color = "red", linetype = "dashed", size = 1) 
+
+grid.arrange(plot4, plot5, plot6,ncol=2)
+```
+
+De nuevo, nos encontramos una distribución normal, y vemos que el descuento medio que ofrece la pagina es un 60%
+
+## Relación entre variables numericas-categoricas
+
+Mostraremos a continuación analizando las relaciones entre variables numericas y categoricas. Por ejemplo, podemos apreciar diferencias en las valoraciones de juegos de distintos juegos? O en su precio? Veamoslo
+
+### Valoración y género
+
+```{r}
+compare_fact_num(gamesdatasetClean, genre1, valoration)
+
+```
+
+A primera vista, no se aprecian grandes diferencias (vemos que hay valoraciones malas en todos los generos), salvo en el genero de deportes, que aparentemente tiene una valoración media más baja.
+
+### Valoración y DLC
+
+También podemos ver si las expansiones tienen en media mejor nota que los juegos (quizá la nota del juego base influye en la del DLC)
+
+```{r}
+plot7<- compare_fact_num(gamesdatasetClean, DLC, valoration)
+
+```
+
+Puede confirmarse nuestras sospechas, aunque solo con esta información no se puede confirmar
+
+### 5.4.3: Valoración y Indie
+
+```{r}
+plot8 <- compare_fact_num(gamesdatasetClean, indie, valoration)
+
+grid.arrange(plot7, plot8,ncol=2)
+
+```
+
+No se aprecian diferencias visibles entre valoracion media de juegos indie o no. Esto habla bien de estudios mas pequeños e independientes, que a pesar de tener menos recursos crean juegos con valoraciones a la altura de grandes empresas.
+
+## Relación entre variables numéricas
+
+Algo que no puede ser tan obvio a primera vista como lo puede ser la relación entre el precio y el descuento, es como reacciona ante cambios de variables como precio, descuento o numero de reseñas.
+
+```{r}
+plot9 <- compare_numeric_columns(gamesdatasetClean, valoration, price)
+plot10 <- compare_numeric_columns(gamesdatasetClean, valoration, discount)
+plot11 <- compare_numeric_columns(gamesdatasetClean, valoration, reviews)
+grid.arrange(plot9, plot10,plot11,ncol=2)
+```
+
+Aparentemente, la valoración no influye en el precio de forma notable. Tampoco se aprecia una gran relacion entre descuento y valoración, al igual que la cantidad de reseñas no influye en la valoración
+
+Para confirmar lo que se intuye en los graficos mediante el proceso de contraste de hipótesis
+
+## Correlación de variables numéricas
+
+```{r}
+numeric_columns <- select_if(gamesdatasetClean, is.numeric)
+
+correlation_matrix <- cor(numeric_columns)
+
+corrplot(correlation_matrix, method = "circle")
+
+```
+
+No se aprecia correlacion, salvo con el precio/porecio inicial, lo cual es de esperar. Por el resto, el dataframe no presenta problemas de colinealidad
+
+## Contrastes de hipótesis
+
+### Contraste de medias para acción y deporte
+
+#### Selección de muestras
+
+Queremos ver si los generos impactan en la media de la valoración. Para ello, vamos a ver si hay una diferencia significativa entre generos de juegos.Vamos a comparar el genero de acción con deporte, para confirmar o desmentir la intución que nos han dado los gráficos
+
+```{r}
+accion_data <- subset(gamesdatasetClean, genre1 == "Acción")
+deporte_data <- subset(gamesdatasetClean, genre1 == "Deporte")
+
+accion_data_valoration <- accion_data$valoration
+deporte_data_valoration <- deporte_data$valoration
+combined_data <- list(Deporte = deporte_data$valoration, Acción = accion_data$valoration)
+
+
+```
+
+Para aplicar el test correcto y correspondiente, primero hemos de comprobar una serie de cosas: Que distribución siguen los datos, y si las muestras tienen varianzas iguales o distintas.
+
+#### Test de shapiro (normalidad)
+
+Ya vimos en los gráficos anteriores que la mayoria de variables no siguen una distribución normal. De todas maneras, lo vamos a comprobar aplicando el test de shapiro, que tiene como hipótesis nula la normalidad de los datos, e hipótesis alternativa la asunción de no normalidad.
+
+```{r}
+shapiro.test(accion_data_valoration)
+shapiro.test(deporte_data_valoration)
+```
+
+Vemos que ambos p-valores son muy muy pequeñas, esto quiere decir que rechazamos la hipotesis nula. Por lo tanto, la distribución de nuestros datos no es normal y se confirma lo que hemos intuido graficamente.
+
+#### Test de Levene (igualdad de varianzas)
+
+El test de Levene es una prueba estadística utilizada para comprobar si dos muestras tienen igualdad de varianza.
+
+El procedimiento del test consiste en calcular una estadística de prueba basada en las diferencias absolutas entre los valores de las muestras y su media. Se puede utilizar tanto para muestras independientes como pareadas.
+
+A contianuación, vamos a analizar la varianza de ambos grupos, y ver si son iguales o no. Dado que nuestros datos no estan distribuidos de forma normal, utilizaremos el test Levene.El test Levene tiene como hipotesis nula la asunción de igualdad de varianza, y como hipótesis alternativa el rechazo de igualdad de varianzas.
+
+```{r}
+levene_test_result <- leveneTest(valoration ~ genre1, data = gamesdatasetClean)
+levene_test_result
+```
+
+P valor extremadamente pequeño. Rechazamos la hipotesis nula de igualdad de varianzas, y por tanto tenemos varianzas desiguales. El test levene analiza la variación de varianzas entre grupos de una variable discreta. Esto quiere decir que las varianzas entre todos los niveles de genre1 son desiguales.
+
+#### Test a Realizar
+
+Dado que nos encontramos con dos muestras de varianza poblacional desconocida y distinta, podemos aplicar el test de Welch (t de welch), como alternativa a t de Student
+
+El test tendrá como hipotesis nula la igualdad de medias x1=x2. Hipotesis alternativa x1!=x2
+
+#### Aplicación
+
+Apliquemos ahora el test correspondiente:
+
+```{r}
+t.test(accion_data_valoration, deporte_data_valoration, var.equal = FALSE)
+```
+
+P valor inferior a 0.05. Esto significa que rechazamos la hipotesis nula, y podemos afirmar que existen diferencias significativas entre medias Comprobamos y afirmamos lo que se podia intuir en el grafico: el genero influye en la nota final, almenos en el caso de accion/deporte.
+
+Podemos, a través de otro analisis de contraste, ver si esto se refleja en el precio
+
+### Contraste medias deporte/acción en cuanto a precio
+
+Como ya hemos presentado el procedimiento para justificar el test, mostraremos directamente los resultados del test
+
+```{r}
+accion_data_precio <- accion_data$price
+deporte_data_precio <- deporte_data$price
+```
+
+```{r}
+shapiro.test(accion_data_precio)
+shapiro.test(deporte_data_precio)
+```
+
+```{r}
+t.test(accion_data_precio, deporte_data_precio)
+```
+
+A pesar de la diferencia de medias en cuanto a valoraciones, no se puede afirmar que exista una diferencia en la media de precios.
+
+# Modelos de predicción
+
+En este apartado vamos a construir dos modelos predictivos: regresión lineal y decision tree.
+
+Antes de nada (y aunque no se muestre), se recomienda partir los datos en dos grupos, 1 de entrenamiento y otro de test, con el que podemos medir el rendimiento de nuestro modelo.
+
+El objetivo de este apartado es ver si podemos predecir el precio de un juego basado en información contenida en el conjunto de datos:
+
+## Regresión lineal
+Predecimos precio.
+
+```{r}
+library("tidymodels")
+set.seed(25)
+games_split<-gamesdatasetClean %>% initial_split(.75)
+
+games_training<- games_split %>% training()
+games_test<- games_split %>% testing()
+```
+
+Vamos a hacer una regresión sobre los precios para ver qué variables influyen en gran medida. Vamos a empezar analizando Reviews, Discount y Valoration.
+
+```{r}
+regression_model <- lm(price ~ reviews + discount + valoration + year , data = games_training)
+tidy(regression_model)
+rcuadrado <- summary(regression_model)$r.squared
+sprintf("El R cuadrado del modelo es %f", rcuadrado)
+```
+
+```{r}
+residuals <- regression_model$residuals
+
+qqnorm(residuals, main = "Q-Q Plot of Residuals")
+qqline(residuals)
+
+```
+```{r}
+predictions <- predict(regression_model, newdata = games_test)
+mse <- mean((gamesdatasetClean$price - predictions)^2)
+mse
+```
+
+Análisis:
+
+-   E R-cuadrado es de 0.25, esto significa que el modelo explica un 25% de la variabilidad de la variable precio. Esto es bastante poco.
+-   Las variables reviews y discount son significativas debido a que su p-valor es menor a 0.05, aunque sus coeficientes son muy bajos.
+-   La variable valoration no es significativa debido a que p-valor es mayor a 0.05, por lo que la quitaremos del modelo.
+
+Vamos a probar ahora añadiéndole una variable cualitativa como es genero, como referencia pondremos Accion
+
+
+```{r}
+games_training$genre1 <- relevel(games_training$genre1, ref = "Acción")
+
+regression_model <- lm(price ~ reviews + discount + year +genre1, data = games_training)
+tidy(regression_model)
+rcuadrado <- summary(regression_model)$r.squared
+sprintf("El R cuadrado del modelo es %f", rcuadrado)
+```
+
+Análisis:
+
+-   El R-cuadrado sigue siendo muy bajo, casi un 27% este modelo.
+-   Las variables reviews y género siguen siendo significativas y mantienen sus coefcientes
+-   Los géneros: AVenturas, Carreras, Estrategie, Indies y RPG son significativos. Sus coeficientes son de: -1.29, 3.07, -1.84, -2.48 y de 2.30 respectivamente. Estos coeficientes son mayores a los del modelo anterior.
+-   Los géneros Deporte y Simulación no son significativos debido a que su p-valor es mayor a 0.05.
+
+Sobre la regresión podemos decir que no son muy buenos modelos debido a su R-cuadrado que es muy pequeño, hay otros modelos con otras herramientas que serían mejores para este tipo de predicciones.
+
+Probaremos si Decision Tree es un mejor modelo.
+
+## Decision Tree
+
+```{r}
+library(rpart)
+
+tree_model <- rpart(price ~ discount + reviews + genre1, data = games_training)
+
+library(rpart.plot)
+rpart.plot(tree_model, type = 4, extra = 101, under = TRUE, cex = 0.8, box.palette = "auto")
+
+
+predictions <- predict(tree_model, newdata = games_test)
+actual_labels <- games_test$price
+
+# Calculate R-squared
+ss_residual <- sum((games_test$price - predictions)^2)
+ss_total <- sum((games_test$price - mean(games_test$price))^2)
+r_squared <- 1 - (ss_residual / ss_total)
+
+# Calculate MSE
+mse <- mean((games_test$price - predictions)^2)
+
+# Print the results
+print(paste("R-squared:", round(r_squared, 4)))
+print(paste("MSE:", round(mse, 4)))
+
+```
+
+Podemos ver que las métricas mejoran un poco, aunque no de forma significativa, sin alcanzar un R cuadrado de 0.35. El error cuadrado total se ve reducido también, aunque de nuevo sin ser una mejora sustancial.
+
+En cada nodo se puede observar el valor (medio) predicho para cada nodo. Además vemos el numero de observaciones en cada nodo, y el % de observaciones que cae en este nodo. También se indica la condición que ha de cumplir cada observación para avanzar por un lado u otro.
+
+
+# Conclusiones
+
+Tras el analisis realizado sobre el dataset de partida, podemos extraer las siguientes conclusiones:
+
+- La valoración media de los juegos en la plataforma es de un 8.5.
+- Hemos descubierto quienes son las 15 compañias que mas juegos han publicado en la plataforma y la valoración media obtenida de cada uno.
+- Tomando como referencia estas 15 compañias, hemos analizado cuales son los generos de juegos más populares entre ellas: Destaca con más del doble de juegos que cualquier otra categoria la de acción. En segundo lugar encontramos simulación y en tercer lugar estrategia
+- Poco menos que la mitad de los juegos publicados en esta plataforma son indies.
+- Graficamente hemos intuido que la valoración media de los DLC son mayores a los juegos no DLC.
+- Hemos comprobado mediante contrastes de hipótesis que el género puede influir de forma significativa el la media de valoración (y hemos visto que deporte es el genero con peor valoración)
+- Los datos no siguen una distribución normal
+- La variabilidad total del dataset está explicada principalmente en 2 variables: title y price. Title en este caso actua como identificador único, lo que provoca un alto nivel de overfitting.
+- Modelos predictivos con un R cuadrado en torno al 30%, un valor bastante bajo, indicando un modelo poco fiable.Esto puede darse a que nuestro dataset no captura variables relevantes en la industria, como puede ser el tamaño del juego(A, AA, AAA), tamaño de la empresa, costes de desarrollo etc. Otra posibilidad es que nuestros modelos no son capaces de capturar las relaciones no lineales existentes entre las variables.
+
+Con todo esto, a pesar de no poder crear modelos predictivos muy buenos, si hemos obtenido información valiosa acerca de la industria del videojuego, sus empresas más grandes en cuanto a numero de juegos se refiere, que géneros son los más producidos y si este influye de alguna manera en la valoración.
+
+# Participaciones
+
+```{r}
+column1 <- c("Investigación previa", "Redacción de respuestas", "Desarrollo del código", "Video")
+column2 <- c("SMM, DS", "SMM, DS", "SMM, DS", "-")
+
+# Combine the columns into a data frame
+table_data <- data.frame(Column1 = column1, Column2 = column2)
+kable(table_data)
+```
